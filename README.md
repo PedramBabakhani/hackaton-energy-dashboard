@@ -558,7 +558,3 @@ A: The code treats it as **kWh per hour**. Keep units consistent in your ingeste
 A: Simple normal approximation using validation residual std (`±1.96σ`). This is a demo—improve as needed.
 
 ---
-
-### That’s it 🎉
-
-If you copy this README into `README.md`, your team will have everything they need to run and demo the project—fast. If you want, I can also generate a tiny **Postman collection** for all endpoints.
