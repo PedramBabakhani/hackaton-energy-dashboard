@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Energy Forecast & CO₂ Dashboard</title>
+  <link rel="stylesheet" href="styles.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Energy Forecast & CO₂</h1>
+    <div class="controls">
+      <label>Building ID <input id="buildingId" type="text" value="B-101"/></label>
+      <label>History (h) <input id="histHours" type="number" min="1" max="720" value="48"/></label>
+      <label>Forecast (h) <input id="fcHours" type="number" min="1" max="168" value="24"/></label>
+      <label>CO₂ factor (g/kWh) <input id="co2Factor" type="number" min="0" value="220"/></label>
+      <button id="loadBtn">Load</button>
+    </div>
+    <p id="status"></p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Load: last actuals & next forecast</h2>
+      <canvas id="loadChart"></canvas>
+    </section>
+
+    <section class="card two-col">
+      <div>
+        <h2>CO₂ forecast (total)</h2>
+        <div class="kpi" id="co2Total">—</div>
+        <p class="hint">Sum over forecast window using selected factor.</p>
+      </div>
+      <div>
+        <h2>CO₂ by hour</h2>
+        <canvas id="co2Chart"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Service Health</h2>
+      <pre id="healthBox">Waiting…</pre>
+    </section>
+  </main>
+
+  <footer>
+    <small>Hackathon demo • FastAPI + Chart.js</small>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
