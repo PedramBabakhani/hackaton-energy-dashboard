@@ -1,0 +1,13 @@
+createTime: '2025-08-15T15:45:12.098423772Z'
+filename: cloudbuild.yaml
+github:
+  name: hackaton-energy-dashboard
+  owner: PedramBabakhani
+  push:
+    branch: ^main$
+id: 2076ef60-1e36-49f2-a1d9-7e6e149f4008
+name: HRI-Hackathon-Update
+resourceName: projects/hri-energy-forecast-469114/locations/global/triggers/2076ef60-1e36-49f2-a1d9-7e6e149f4008
+serviceAccount: projects/hri-energy-forecast-469114/serviceAccounts/cloudbuild-deployer@hri-energy-forecast-469114.iam.gserviceaccount.com
+options:
+  logging: CLOUD_LOGGING_ONLY
