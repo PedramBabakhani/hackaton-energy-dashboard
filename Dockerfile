@@ -1,11 +1,25 @@
-@'
+# Use an official Python runtime
 FROM python:3.11-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# Set working directory
 WORKDIR /app
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-COPY . /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirement files first (for caching)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy all project files into container
+COPY . .
+
+# Expose port for FastAPI
 EXPOSE 8000
-RUN mkdir -p /app/data /app/models
-CMD ["uvicorn","main:app","--host","0.0.0.0","--port","8000"]
-'@ | Set-Content -Path "$proj\Dockerfile" -Encoding UTF8
+
+# Command to run the app with uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

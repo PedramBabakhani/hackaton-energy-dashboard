@@ -4,13 +4,23 @@ from typing import List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from joblib import dump, load
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
 
+# ========================
+# Security imports
+# ========================
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+# ========================
+# App config
+# ========================
 APP_NAME = "Energy Forecast & CO2 PoC"
 DB_PATH = os.environ.get("DB_PATH", "./data/energy.db")
 MODELS_DIR = os.environ.get("MODELS_DIR", "./models")
@@ -19,22 +29,105 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 app = FastAPI(title=APP_NAME, version="0.1.0", description="Ingest → Train → Forecast → CO2")
 
-# CORS for local dashboard and quick tests
+# CORS for dashboard and quick tests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten later (e.g., ["http://127.0.0.1:5050"])
+    allow_origins=["*"],   # tighten later in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 from fastapi.staticfiles import StaticFiles
-
-# Serve the dashboard folder at /ui
 app.mount("/ui", StaticFiles(directory="dashboard", html=True), name="ui")
 
+# ========================
+# Security settings
+# ========================
+SECRET_KEY = "CHANGE_THIS_SECRET_TO_A_RANDOM_STRING"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-# ---------- DB ----------
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Demo in-memory user DB
+fake_users_db = {
+    "hackathon": {
+        "username": "hackathon",
+        "full_name": "Hackathon Future Lab",
+        "hashed_password": pwd_context.hash("futurelab"),
+        "disabled": False,
+    }
+}
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+class User(BaseModel):
+    username: str
+    full_name: Optional[str] = None
+    disabled: Optional[bool] = None
+
+class UserInDB(User):
+    hashed_password: str
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_user(db, username: str):
+    if username in db:
+        user_dict = db[username]
+        return UserInDB(**user_dict)
+
+def authenticate_user(db, username: str, password: str):
+    user = get_user(db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = get_user(fake_users_db, username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+# Token endpoint
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    access_token = create_access_token(data={"sub": user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+# ========================
+# Database helpers
+# ========================
 def get_conn():
     conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
     conn.execute("""CREATE TABLE IF NOT EXISTS measurements(
@@ -47,7 +140,9 @@ def get_conn():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_meas_bid_ts ON measurements(building_id, ts);")
     return conn
 
-# ---------- Schemas ----------
+# ========================
+# Schemas
+# ========================
 class Record(BaseModel):
     ts: datetime
     q_flow_heat: float = Field(..., description="kWh during the hour")
@@ -88,7 +183,9 @@ class HistoryPoint(BaseModel):
     q_flow_heat: float
     temperature: Optional[float] = None
 
-# ---------- Helpers ----------
+# ========================
+# Core logic
+# ========================
 def _df_from_db(building_id: str) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql_query(
@@ -136,7 +233,7 @@ def _fe(df: pd.DataFrame) -> pd.DataFrame:
     df["roll_3"] = df["q_flow_heat"].rolling(3).mean().shift(1)
     df["roll_6"] = df["q_flow_heat"].rolling(6).mean().shift(1)
     df["roll_24"] = df["q_flow_heat"].rolling(24).mean().shift(1)
-    df["temperature"] = (df.get("temperature") if "temperature" in df else pd.Series(np.nan, index=df.index))
+    df["temperature"] = df.get("temperature", pd.Series(np.nan, index=df.index))
     df["temperature"] = df["temperature"].astype(float).ffill().bfill()
     return df
 
@@ -145,8 +242,6 @@ def _train(building_id: str, min_rows: int = 72) -> Dict[str, Any]:
     if df.empty or len(df) < min_rows:
         raise HTTPException(400, f"Not enough data to train. Need ≥{min_rows} hourly rows.")
     df = _fe(df).dropna().reset_index(drop=True)
-    if df.empty:
-        raise HTTPException(400, "No usable rows after feature engineering.")
     feats = [
         "hour","dow","hour_sin","hour_cos","dow_sin","dow_cos",
         "temperature","lag_1","lag_24","roll_3","roll_6","roll_24"
@@ -157,14 +252,11 @@ def _train(building_id: str, min_rows: int = 72) -> Dict[str, Any]:
     model = RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1)
     model.fit(Xtr, ytr)
     yhat = model.predict(Xte)
-    mae = float(mean_absolute_error(yte, yhat)) if len(yte) else 0.0
-    resid_std = float(np.std(yte - yhat)) if len(yte) else 0.0
+    mae = float(mean_absolute_error(yte, yhat))
+    resid_std = float(np.std(yte - yhat))
     dump({"model": model, "feats": feats}, os.path.join(MODELS_DIR, f"{building_id}.joblib"))
     with open(os.path.join(MODELS_DIR, f"{building_id}.meta.json"), "w") as f:
-        json.dump(
-            {"building_id": building_id, "resid_std": resid_std, "trained_at": datetime.utcnow().isoformat() + "Z"},
-            f,
-        )
+        json.dump({"building_id": building_id, "resid_std": resid_std}, f)
     return {"mae": mae, "resid_std": resid_std, "rows": int(len(df))}
 
 def _load_model(building_id: str):
@@ -185,7 +277,7 @@ def _repeat_last_day_temps(hist: pd.DataFrame, steps: int) -> List[float]:
         last = float(hist["temperature"].dropna().iloc[-1]) if hist["temperature"].dropna().any() else 20.0
         return [last] * steps
     t = tail["temperature"].tolist()
-    return (t + t * 10)[:steps]  # repeat safely
+    return (t + t * 10)[:steps]
 
 def _forecast(building_id: str, horizon: int) -> ForecastResponse:
     model, feats, resid_std = _load_model(building_id)
@@ -223,7 +315,9 @@ def _forecast(building_id: str, horizon: int) -> ForecastResponse:
     pi_high = [p + z * resid_std for p in preds]
     return ForecastResponse(building_id=building_id, horizon=horizon, ts=times, q_forecast=preds, pi_low=pi_low, pi_high=pi_high)
 
-# ---------- Routes ----------
+# ========================
+# Routes
+# ========================
 @app.get("/health")
 def health():
     conn = get_conn()
@@ -239,49 +333,140 @@ def history(building_id: str, hours: int = Query(48, ge=1, le=720)):
     if df.empty:
         raise HTTPException(404, "No data for that building_id")
     df = df.sort_values("ts").tail(hours)
-    out: List[HistoryPoint] = []
-    for _, r in df.iterrows():
-        out.append(
-            HistoryPoint(
-                ts=pd.to_datetime(r["ts"], utc=True).to_pydatetime(),
-                q_flow_heat=float(r["q_flow_heat"]),
-                temperature=None if pd.isna(r.get("temperature")) else float(r["temperature"]),
-            )
-        )
-    return out
+    return [HistoryPoint(ts=pd.to_datetime(r["ts"], utc=True).to_pydatetime(),
+                         q_flow_heat=float(r["q_flow_heat"]),
+                         temperature=None if pd.isna(r.get("temperature")) else float(r["temperature"]))
+            for _, r in df.iterrows()]
 
 @app.post("/ingest")
-def ingest(payload: IngestPayload):
+async def ingest(payload: IngestPayload, current_user: User = Depends(get_current_user)):
     if not payload.records:
         raise HTTPException(400, "No records provided.")
     n = _insert_records(payload.building_id, payload.records)
     return {"inserted": int(n), "building_id": payload.building_id}
 
 @app.post("/train")
-def train(building_id: str = Query(...), min_rows: int = Query(72, ge=24)):
+async def train(building_id: str = Query(...), min_rows: int = Query(72, ge=24), current_user: User = Depends(get_current_user)):
     return {"building_id": building_id, **_train(building_id, min_rows=min_rows)}
 
 @app.get("/forecast", response_model=ForecastResponse)
-def forecast(building_id: str, hours: int = Query(24, ge=1, le=168)):
+async def forecast(building_id: str, hours: int = Query(24, ge=1, le=168), current_user: User = Depends(get_current_user)):
     return _forecast(building_id, hours)
 
 @app.get("/carbon", response_model=CarbonResponse)
-def carbon(
-    building_id: str,
-    hours: int = Query(24, ge=1, le=168),
-    factor_g_per_kwh: float = Query(220.0),
-):
+async def carbon(building_id: str,
+                 hours: int = Query(24, ge=1, le=168),
+                 factor_g_per_kwh: float = Query(220.0),
+                 current_user: User = Depends(get_current_user)):
     fc = _forecast(building_id, hours)
     co2 = [float(v) * float(factor_g_per_kwh) for v in fc.q_forecast]
     total = float(np.sum(co2))
-    return CarbonResponse(
-        building_id=building_id,
-        horizon=hours,
-        factor_g_per_kwh=factor_g_per_kwh,
-        ts=fc.ts,
-        co2_g=co2,
-        total_co2_g=total,
-    )
+    return CarbonResponse(building_id=building_id, horizon=hours,
+                          factor_g_per_kwh=factor_g_per_kwh, ts=fc.ts,
+                          co2_g=co2, total_co2_g=total)
+
+
+
+
+
+from fastapi.responses import JSONResponse
+
+# ---------- Gaia-X Self Description ----------
+@app.get("/gaiax/metadata")
+def gaiax_metadata():
+    return JSONResponse(content={
+        "@context": "https://www.w3.org/ns/odrl.jsonld",
+        "@type": "gx:ServiceOffering",
+        "gx:provider": {
+            "gx:legalName": "Hackathon Future Lab",
+            "gx:participantId": "urn:gx:participant:pedram-lab",
+            "gx:contact": "mailto:info@hackathonfuturelab.org"
+        },
+        "gx:service": {
+            "gx:title": APP_NAME,
+            "gx:description": "Energy Forecast & CO₂ API for federated energy data spaces",
+            "gx:version": "0.1.0",
+            "gx:accessPolicy": "JWT Token",
+            "gx:endpoints": [
+                {"url": "/ingest", "method": "POST", "securedBy": "JWT"},
+                {"url": "/forecast", "method": "GET", "securedBy": "JWT"},
+                {"url": "/carbon", "method": "GET", "securedBy": "JWT"}
+            ]
+        }
+    })
+
+# ---------- Gaia-X Data Contract ----------
+@app.get("/gaiax/datacontract")
+def gaiax_data_contract():
+    return JSONResponse(content={
+        "@context": "https://www.w3.org/ns/odrl.jsonld",
+        "@type": "odrl:Policy",
+        "odrl:permission": [
+            {
+                "odrl:target": "Energy consumption & CO₂ forecast",
+                "odrl:action": "use",
+                "odrl:constraint": {"odrl:operator": "eq", "odrl:rightOperand": "research"}
+            }
+        ],
+        "odrl:prohibition": [],
+        "odrl:obligation": [
+            {"odrl:action": "delete", "odrl:constraint": {"odrl:operator": "lteq", "odrl:rightOperand": "30d"}}
+        ],
+        "license": "CC-BY-4.0",
+        "security": "JWT authentication + mTLS (planned)"
+    })
+
+# ---------- Gaia-X Self-Description ----------
+@app.get("/gaiax/descriptor")
+def gaiax_descriptor():
+    """
+    Minimal Gaia-X Service Self-Description (for hackathon prototype)
+    Format: JSON-LD (Gaia-X standard for interoperability)
+    """
+    descriptor = {
+        "@context": "https://www.w3.org/ns/odrl.jsonld",
+        "@type": "gx:ServiceOffering",
+        "gx:legalEntity": {
+            "gx:legalName": "Hackathon Future Lab",
+            "gx:legalRegistrationNumber": "DE-HFL-2025",
+            "gx:location": "Berlin, Germany"
+        },
+        "gx:serviceDescription": {
+            "gx:name": APP_NAME,
+            "gx:version": "0.1.0",
+            "gx:description": "Energy forecasting and CO2 estimation service using federated building data.",
+            "gx:endpoints": [
+                {
+                    "gx:entrypoint": "/ingest",
+                    "gx:method": "POST",
+                    "gx:description": "Ingest new measurement data for a building."
+                },
+                {
+                    "gx:entrypoint": "/train",
+                    "gx:method": "POST",
+                    "gx:description": "Train a forecast model for a building."
+                },
+                {
+                    "gx:entrypoint": "/forecast",
+                    "gx:method": "GET",
+                    "gx:description": "Retrieve energy forecast for a building."
+                },
+                {
+                    "gx:entrypoint": "/carbon",
+                    "gx:method": "GET",
+                    "gx:description": "Retrieve CO2 emissions forecast."
+                }
+            ]
+        },
+        "gx:dataCategories": ["Energy usage", "Temperature"],
+        "gx:compliance": ["Gaia-X Hackathon Prototype"],
+        "gx:security": {
+            "gx:authentication": "JWT Bearer Token",
+            "gx:encryption": "TLS 1.2+",
+            "gx:identity": "Self-issued for hackathon, mTLS planned"
+        }
+    }
+    return descriptor
 
 if __name__ == "__main__":
     import uvicorn

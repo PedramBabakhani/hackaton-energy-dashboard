@@ -6,3 +6,6 @@ scikit-learn==1.4.2
 joblib==1.4.2
 pydantic==1.10.15
 python-dateutil==2.9.0.post0
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt==4.0.1
