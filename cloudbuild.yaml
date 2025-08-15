@@ -1,0 +1,23 @@
+steps:
+  # Step 1: Build Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'europe-west3-docker.pkg.dev/$PROJECT_ID/my-repo/energy-dashboard:$COMMIT_SHA', '.']
+
+  # Step 2: Push Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'europe-west3-docker.pkg.dev/$PROJECT_ID/my-repo/energy-dashboard:$COMMIT_SHA']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - energy-dashboard
+      - --image=europe-west3-docker.pkg.dev/$PROJECT_ID/my-repo/energy-dashboard:$COMMIT_SHA
+      - --region=europe-west3
+      - --platform=managed
+      - --allow-unauthenticated
+
+images:
+  - 'europe-west3-docker.pkg.dev/$PROJECT_ID/my-repo/energy-dashboard:$COMMIT_SHA'
