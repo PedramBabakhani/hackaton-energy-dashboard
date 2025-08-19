@@ -24,10 +24,14 @@ def make_sample(building_id="B-101", days=10):
         {
             "ts": t.isoformat(),
             "q_flow_heat": round(float(max(0, q)), 2),
-            "temperature": round(float(temp), 2)
+            "temperature": round(float(temp), 2),
+            "hour": int(t.hour),
+            "weekday": int(t.weekday()),
+            "month": int(t.month)
         }
         for t, temp, q in zip(rng, base_temp, heat)
     ]
+
     payload = {"building_id": building_id, "records": records}
     with open("sample_data.json", "w") as f:
         json.dump(payload, f, indent=2)

@@ -1,4 +1,9 @@
-const API_BASE = "http://127.0.0.1:8000";
+// const API_BASE = "http://127.0.0.1:8080";
+
+// Use backend on 8080 explicitly
+const API_BASE = "http://localhost:8080";
+console.log("API_BASE =", API_BASE);
+
 
 const els = {
   buildingId: document.getElementById("buildingId"),
@@ -9,20 +14,42 @@ const els = {
   status: document.getElementById("status"),
   healthBox: document.getElementById("healthBox"),
   co2Total: document.getElementById("co2Total"),
+  username: document.getElementById("username"),
+  password: document.getElementById("password"),
+  loginBtn: document.getElementById("loginBtn"),
 };
 
+let accessToken = null;
 let loadChart, co2Chart;
 
 function fmtTs(ts) {
-  return new Date(ts).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit" });
+  return new Date(ts).toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit"
+  });
 }
+
 async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  const headers = {};
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
+  }
+  console.log("Fetching:", url, "with headers", headers);
+  const r = await fetch(url, { headers });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`${r.status} ${r.statusText} — ${txt}`);
+  }
   return r.json();
 }
 
 async function loadAll() {
+  if (!accessToken) {
+    els.status.textContent = "Please log in first.";
+    return;
+  }
+
   const b = encodeURIComponent(els.buildingId.value.trim());
   const hHrs = Number(els.histHours.value);
   const fHrs = Number(els.fcHours.value);
@@ -60,7 +87,7 @@ async function loadAll() {
 
     els.status.textContent = "Loaded ✓";
   } catch (err) {
-    console.error(err);
+    console.error("Load error:", err);
     els.status.textContent = `Error: ${err.message}`;
   }
 }
@@ -84,7 +111,11 @@ function drawLoadChart(labels, actual, forecast, low, high) {
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { position: "bottom" },
-        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(2)} kWh` } }
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(2)} kWh`
+          }
+        }
       },
       scales: {
         y: { title: { display: true, text: "kWh" } },
@@ -104,7 +135,11 @@ function drawCo2Chart(labels, grams) {
       responsive: true,
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `${Number(ctx.parsed.y).toFixed(0)} g CO₂` } }
+        tooltip: {
+          callbacks: {
+            label: ctx => `${Number(ctx.parsed.y).toFixed(0)} g CO₂`
+          }
+        }
       },
       scales: {
         y: { title: { display: true, text: "grams CO₂" } },
@@ -114,5 +149,32 @@ function drawCo2Chart(labels, grams) {
   });
 }
 
-document.getElementById("loadBtn").addEventListener("click", loadAll);
-loadAll(); // auto-load on first open
+// --- Login Handling ---
+els.loginBtn.addEventListener("click", async () => {
+  console.log("Login button clicked");
+  const username = els.username.value;
+  const password = els.password.value;
+  console.log("Trying login with", username);
+  try {
+    const res = await fetch(`${API_BASE}/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+    });
+    console.log("Response status:", res.status);
+    const txt = await res.text();
+    console.log("Raw response:", txt);
+    if (!res.ok) throw new Error(`Login failed: ${res.status} ${txt}`);
+    const data = JSON.parse(txt);
+    accessToken = data.access_token;
+    console.log("Got token:", accessToken);
+    els.status.textContent = `Logged in as ${username}`;
+    // auto-load data after login
+    loadAll();
+  } catch (err) {
+    console.error("Login error:", err);
+    els.status.textContent = `Login error: ${err.message}`;
+  }
+});
+
+els.loadBtn.addEventListener("click", loadAll);
