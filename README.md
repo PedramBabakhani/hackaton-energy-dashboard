@@ -1,3 +1,6 @@
+Perfect ✅ Here’s the **full, ready-to-paste `README.md`** in one consistent block of text:
+
+````markdown
 # ⚡ Energy Forecast & CO₂ PoC — Gaia-X Edition
 
 This microservice demonstrates **secure, Gaia-X compliant energy data sharing**:
@@ -6,7 +9,7 @@ This microservice demonstrates **secure, Gaia-X compliant energy data sharing**:
 - **Trains** lightweight ML models for short-term forecasting.  
 - **Forecasts** energy demand and **estimates CO₂ emissions**.  
 - **Protects access** via **JWT-based authentication** following Gaia-X trust principles.  
-- Comes with a minimal **HTML/JS dashboard**.
+- Comes with a minimal **HTML/JS dashboard** for testing.
 
 ---
 
@@ -29,9 +32,10 @@ This PoC integrates **Gaia-X style authentication**:
 curl -X POST http://localhost:8080/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=hackathon&password=hackathon"
-```
+````
 
 **Response:**
+
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR...",
@@ -39,7 +43,7 @@ curl -X POST http://localhost:8080/token \
 }
 ```
 
-2. Copy the `access_token`.  
+2. Copy the `access_token`.
 3. Use it in every request with:
 
 ```
@@ -62,20 +66,20 @@ docker build -t energy-forecast-gaiax .
 docker run -p 8080:8080 energy-forecast-gaiax
 ```
 
-3. Open the API docs:  
-👉 [http://localhost:8080/docs](http://localhost:8080/docs)
+3. Open the API docs:
+   👉 [http://localhost:8080/docs](http://localhost:8080/docs)
 
-4. Open the dashboard:  
-👉 [http://localhost:8080/ui/](http://localhost:8080/ui/)
+4. Open the dashboard:
+   👉 [http://localhost:8080/ui/](http://localhost:8080/ui/)
 
 ---
 
 ## 🔑 Authentication in the Dashboard
 
-- Open the UI at **`/ui/`**.  
-- Enter your **username** (`hackathon`) and **password** (`hackathon`).  
-- The dashboard will automatically request a token and attach it to every API call.  
-- Without a valid token, the backend rejects requests with **401 Unauthorized**.  
+* Open the UI at **`/ui/`**.
+* Enter your **username** (`hackathon`) and **password** (`hackathon`).
+* The dashboard will automatically request a token and attach it to every API call.
+* Without a valid token, the backend rejects requests with **401 Unauthorized**.
 
 ---
 
@@ -87,12 +91,14 @@ All requests must include:
 -H "Authorization: Bearer <token>"
 ```
 
-### `GET /health`  
-Service status and row count.
+### `GET /health`
+
+Check service status and row count.
 
 ---
 
-### `POST /ingest`  
+### `POST /ingest`
+
 Ingest hourly energy records.
 
 ```bash
@@ -104,23 +110,47 @@ curl -X POST http://localhost:8080/ingest \
 
 ---
 
-### `POST /train?building_id=B-101`  
-Train or retrain model.
+### `POST /train?building_id=B-101`
+
+Train or retrain a model for a specific building.
+
+```bash
+curl -X POST "http://localhost:8080/train?building_id=B-101" \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ---
 
-### `GET /forecast?building_id=B-101&hours=24`  
+### `GET /forecast?building_id=B-101&hours=24`
+
 Retrieve forecast + prediction intervals.
 
+```bash
+curl -X GET "http://localhost:8080/forecast?building_id=B-101&hours=24" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ---
 
-### `GET /carbon?building_id=B-101&hours=24&factor_g_per_kwh=220`  
+### `GET /carbon?building_id=B-101&hours=24&factor_g_per_kwh=220`
+
 Estimate CO₂ emissions.
 
+```bash
+curl -X GET "http://localhost:8080/carbon?building_id=B-101&hours=24&factor_g_per_kwh=220" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ---
 
-### `GET /history?building_id=B-101&hours=48`  
+### `GET /history?building_id=B-101&hours=48`
+
 Fetch recent historical data.
+
+```bash
+curl -X GET "http://localhost:8080/history?building_id=B-101&hours=48" \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ---
 
@@ -130,7 +160,7 @@ Fetch recent historical data.
 hackaton/
 ├─ data/                  # SQLite DB
 ├─ models/                # Trained models
-├─ dashboard/             # HTML/JS/CSS dashboard (token login included)
+├─ dashboard/             # HTML/JS/CSS dashboard (with token login)
 ├─ main.py                # FastAPI service
 ├─ requirements.txt       # Python deps
 ├─ Dockerfile             # Container build
@@ -141,20 +171,27 @@ hackaton/
 
 ## 🚀 Quick Demo Workflow
 
-1. **Start the service** in Docker.  
-2. **Get a token**: POST to `/token` with username/password.  
-3. **Ingest data**: POST `sample_data.json` to `/ingest` with your token.  
-4. **Train a model**: `POST /train?building_id=B-101`.  
-5. **Forecast**: `GET /forecast?building_id=B-101&hours=24`.  
-6. **View results** in the dashboard (`/ui/`).  
+1. **Start the service** in Docker.
+2. **Get a token**: POST to `/token` with username/password.
+3. **Ingest data**: POST `sample_data.json` to `/ingest` with your token.
+4. **Train a model**: `POST /train?building_id=B-101`.
+5. **Forecast**: `GET /forecast?building_id=B-101&hours=24`.
+6. **Estimate CO₂**: `GET /carbon?building_id=B-101&hours=24&factor_g_per_kwh=220`.
+7. **Check history**: `GET /history?building_id=B-101&hours=48`.
+8. **View results** in the dashboard (`/ui/`).
 
 ---
 
 ## 🛡 Notes
 
-- **Gaia-X principle**: sovereign, trusted data exchange. Tokens simulate identity verification.  
-- Default credentials are for demo only — replace with a real IAM service in production.  
-- SQLite and local models are mounted inside the container; use PostgreSQL or cloud storage for production.  
-- CORS is open (`*`) for hackathon speed — tighten for real deployments.  
+* **Gaia-X principle**: sovereign, trusted data exchange. Tokens simulate identity verification.
+* Default credentials are for demo only — replace with a real IAM service in production.
+* SQLite and local models are mounted inside the container; use PostgreSQL or cloud storage for production.
+* CORS is open (`*`) for hackathon speed — tighten for real deployments.
 
 ---
+
+```
+
+Would you like me to also **add a ready-made `sample_data.json` example** into the README so your colleagues can directly copy-paste and test ingestion?
+```
