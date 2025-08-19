@@ -1,4 +1,11 @@
-const API_BASE = "http://localhost:8080";
+let API_BASE;
+
+if (window.location.hostname.includes("localhost")) {
+  API_BASE = "http://localhost:8080";
+} else {
+  API_BASE = "https://energy-forecast-gaiax-816858741382.europe-west1.run.app";
+}
+
 let TOKEN = null;
 
 // ---------- Utility ----------
