@@ -11,20 +11,40 @@
   <header>
     <h1>Energy Forecast & CO₂</h1>
 
+    <!-- Login -->
     <div class="controls">
-      <!-- Login controls -->
       <label>User <input id="username" type="text" value="hackathon"/></label>
       <label>Password <input id="password" type="password" value="futurelab"/></label>
       <button id="loginBtn">Login</button>
     </div>
 
+    <!-- Building + Params -->
     <div class="controls">
-      <!-- Data controls -->
       <label>Building ID <input id="buildingId" type="text" value="B-101"/></label>
       <label>History (h) <input id="histHours" type="number" min="1" max="720" value="48"/></label>
       <label>Forecast (h) <input id="fcHours" type="number" min="1" max="168" value="24"/></label>
       <label>CO₂ factor (g/kWh) <input id="co2Factor" type="number" min="0" value="220"/></label>
-      <button id="loadBtn">Load</button>
+    </div>
+
+    <!-- Data ingest -->
+    <div class="controls">
+      <label>JSON File 
+        <input type="file" id="jsonFile" accept="application/json"/>
+      </label>
+      <button id="uploadBtn">Upload & Ingest</button>
+
+      <label>External API URL 
+        <input id="externalUrl" type="text" placeholder="https://example.com/api/timeseries"/>
+      </label>
+      <button id="fetchBtn">Fetch & Ingest</button>
+    </div>
+
+    <!-- Model actions -->
+    <div class="controls">
+      <button id="trainBtn">Train</button>
+      <button id="forecastBtn">Forecast</button>
+      <button id="carbonBtn">Carbon</button>
+      <button id="historyBtn">History</button>
     </div>
 
     <p id="status"></p>
@@ -32,7 +52,7 @@
 
   <main>
     <section class="card">
-      <h2>Load: last actuals & next forecast</h2>
+      <h2>Load: last actuals &amp; next forecast</h2>
       <canvas id="loadChart"></canvas>
     </section>
 
@@ -40,7 +60,7 @@
       <div>
         <h2>CO₂ forecast (total)</h2>
         <div class="kpi" id="co2Total">—</div>
-        <p class="hint">Sum over forecast window using selected factor.</p>
+        <p class="hint">Sum over forecast window using selected factor or dynamic data.</p>
       </div>
       <div>
         <h2>CO₂ by hour</h2>

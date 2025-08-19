@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from joblib import dump, load
@@ -17,6 +17,8 @@ from sklearn.metrics import mean_absolute_error
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 # ========================
 # App config
@@ -29,16 +31,21 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 
 app = FastAPI(title=APP_NAME, version="0.1.0", description="Ingest → Train → Forecast → CO2")
 
-# CORS for dashboard and quick tests
+# CORS
+origins = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "https://your-frontend-domain.com",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten later in production
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-from fastapi.staticfiles import StaticFiles
+# Serve dashboard
 app.mount("/ui", StaticFiles(directory="dashboard", html=True), name="ui")
 
 # ========================
@@ -51,7 +58,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# Demo in-memory user DB
+# Demo user DB
 fake_users_db = {
     "hackathon": {
         "username": "hackathon",
@@ -81,8 +88,7 @@ def verify_password(plain_password, hashed_password):
 
 def get_user(db, username: str):
     if username in db:
-        user_dict = db[username]
-        return UserInDB(**user_dict)
+        return UserInDB(**db[username])
 
 def authenticate_user(db, username: str, password: str):
     user = get_user(db, username)
@@ -116,7 +122,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
-# Token endpoint
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
@@ -135,6 +140,8 @@ def get_conn():
         ts TEXT NOT NULL,
         q_flow_heat REAL NOT NULL,
         temperature REAL,
+        wind_speed REAL,
+        price REAL,
         PRIMARY KEY(building_id, ts)
     );""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_meas_bid_ts ON measurements(building_id, ts);")
@@ -145,7 +152,7 @@ def get_conn():
 # ========================
 class Record(BaseModel):
     ts: datetime
-    q_flow_heat: float = Field(..., description="kWh during the hour")
+    q_flow_heat: float
     temperature: Optional[float] = None
 
     @validator("ts", pre=True)
@@ -184,7 +191,7 @@ class HistoryPoint(BaseModel):
     temperature: Optional[float] = None
 
 # ========================
-# Core logic
+# Core logic (old working FE/Train/Forecast)
 # ========================
 def _df_from_db(building_id: str) -> pd.DataFrame:
     conn = get_conn()
@@ -201,22 +208,13 @@ def _df_from_db(building_id: str) -> pd.DataFrame:
 def _insert_records(building_id: str, recs: List[Record]) -> int:
     conn = get_conn()
     cur = conn.cursor()
-    rows = [
-        (
-            building_id,
-            r.ts.isoformat(),
-            float(r.q_flow_heat),
-            (None if r.temperature is None else float(r.temperature)),
-        )
-        for r in recs
-    ]
-    for row in rows:
+    for r in recs:
         cur.execute(
             "INSERT OR REPLACE INTO measurements(building_id, ts, q_flow_heat, temperature) VALUES (?,?,?,?)",
-            row,
+            (building_id, r.ts.isoformat(), float(r.q_flow_heat), None if r.temperature is None else float(r.temperature)),
         )
     conn.commit()
-    n = cur.rowcount or len(rows)
+    n = cur.rowcount or len(recs)
     conn.close()
     return n
 
@@ -252,11 +250,11 @@ def _train(building_id: str, min_rows: int = 72) -> Dict[str, Any]:
     model = RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1)
     model.fit(Xtr, ytr)
     yhat = model.predict(Xte)
-    mae = float(mean_absolute_error(yte, yhat))
-    resid_std = float(np.std(yte - yhat))
+    mae = float(mean_absolute_error(yte, yhat)) if len(yte) else 0.0
+    resid_std = float(np.std(yte - yhat)) if len(yte) else 0.0
     dump({"model": model, "feats": feats}, os.path.join(MODELS_DIR, f"{building_id}.joblib"))
     with open(os.path.join(MODELS_DIR, f"{building_id}.meta.json"), "w") as f:
-        json.dump({"building_id": building_id, "resid_std": resid_std}, f)
+        json.dump({"building_id": building_id, "resid_std": resid_std, "trained_at": datetime.utcnow().isoformat() + "Z"}, f)
     return {"mae": mae, "resid_std": resid_std, "rows": int(len(df))}
 
 def _load_model(building_id: str):
@@ -306,10 +304,7 @@ def _forecast(building_id: str, horizon: int) -> ForecastResponse:
         yhat = float(model.predict(pd.DataFrame([row])[feats])[0])
         preds.append(yhat)
         times.append(t.replace(tzinfo=timezone.utc))
-        sim = pd.concat(
-            [sim, pd.DataFrame({"ts": [t], "q_flow_heat": [yhat], "temperature": [row["temperature"]]})],
-            ignore_index=True,
-        )
+        sim = pd.concat([sim, pd.DataFrame({"ts": [t], "q_flow_heat": [yhat], "temperature": [row["temperature"]]})], ignore_index=True)
     z = 1.96
     pi_low = [max(0.0, p - z * resid_std) for p in preds]
     pi_high = [p + z * resid_std for p in preds]
@@ -327,51 +322,62 @@ def health():
     conn.close()
     return {"status": "ok", "rows": int(n), "app": APP_NAME, "version": "0.1.0"}
 
-@app.get("/history", response_model=List[HistoryPoint])
-def history(building_id: str, hours: int = Query(48, ge=1, le=720)):
-    df = _df_from_db(building_id)
+@app.get("/history")
+async def get_history(building_id: str, limit: int = 50):
+    conn = get_conn()
+    df = pd.read_sql_query(
+        "SELECT ts, q_flow_heat, temperature FROM measurements WHERE building_id=? ORDER BY ts DESC LIMIT ?",
+        conn, params=(building_id, limit),
+    )
+    conn.close()
     if df.empty:
-        raise HTTPException(404, "No data for that building_id")
-    df = df.sort_values("ts").tail(hours)
-    return [HistoryPoint(ts=pd.to_datetime(r["ts"], utc=True).to_pydatetime(),
-                         q_flow_heat=float(r["q_flow_heat"]),
-                         temperature=None if pd.isna(r.get("temperature")) else float(r["temperature"]))
-            for _, r in df.iterrows()]
+        return {"detail": "No data for that building_id"}
+    df = df.sort_values("ts")
+    return df.to_dict(orient="records")
 
 @app.post("/ingest")
-async def ingest(payload: IngestPayload, current_user: User = Depends(get_current_user)):
-    if not payload.records:
-        raise HTTPException(400, "No records provided.")
-    n = _insert_records(payload.building_id, payload.records)
-    return {"inserted": int(n), "building_id": payload.building_id}
+async def ingest(payload: IngestPayload = Body(...)):
+    rows = _insert_records(payload.building_id, payload.records)
+    return {"rows_ingested": rows}
 
 @app.post("/train")
-async def train(building_id: str = Query(...), min_rows: int = Query(72, ge=24), current_user: User = Depends(get_current_user)):
-    return {"building_id": building_id, **_train(building_id, min_rows=min_rows)}
+async def train_model(building_id: str):
+    return _train(building_id)
 
-@app.get("/forecast", response_model=ForecastResponse)
-async def forecast(building_id: str, hours: int = Query(24, ge=1, le=168), current_user: User = Depends(get_current_user)):
-    return _forecast(building_id, hours)
+# forecast endpoint
+@app.get("/forecast")
+def forecast(building_id: str, hist: int = 48, hours: int = 24):
+    fc: ForecastResponse = _forecast(building_id, hours)
 
-@app.get("/carbon", response_model=CarbonResponse)
-async def carbon(building_id: str,
-                 hours: int = Query(24, ge=1, le=168),
-                 factor_g_per_kwh: float = Query(220.0),
-                 current_user: User = Depends(get_current_user)):
-    fc = _forecast(building_id, hours)
-    co2 = [float(v) * float(factor_g_per_kwh) for v in fc.q_forecast]
-    total = float(np.sum(co2))
-    return CarbonResponse(building_id=building_id, horizon=hours,
-                          factor_g_per_kwh=factor_g_per_kwh, ts=fc.ts,
-                          co2_g=co2, total_co2_g=total)
+    hist_df = _df_from_db(building_id).tail(hist)
 
+    return {
+        "timestamps": hist_df.ts.tolist() + fc.ts,
+        "actual": hist_df.q_flow_heat.tolist() + [None] * len(fc.q_forecast),
+        "forecast": [None] * len(hist_df) + fc.q_forecast,
+        "low": [None] * len(hist_df) + fc.pi_low,
+        "high": [None] * len(hist_df) + fc.pi_high,
+    }
 
 
+# carbon endpoint
+@app.get("/carbon")
+def carbon(building_id: str, hours: int = 24, factor_g_per_kwh: float = 200):
+    fc: ForecastResponse = _forecast(building_id, hours)
 
+    by_hour = [v * factor_g_per_kwh for v in fc.q_forecast]
+    total = sum(by_hour)
 
-from fastapi.responses import JSONResponse
+    return {
+        "building_id": building_id,
+        "horizon": hours,
+        "factor_g_per_kwh": factor_g_per_kwh,
+        "ts": fc.ts,
+        "by_hour": by_hour,   # ✅ renamed to match FE
+        "total": total        # ✅ renamed for simplicity
+    }
 
-# ---------- Gaia-X Self Description ----------
+# ---------- Gaia-X Endpoints ----------
 @app.get("/gaiax/metadata")
 def gaiax_metadata():
     return JSONResponse(content={
@@ -395,7 +401,6 @@ def gaiax_metadata():
         }
     })
 
-# ---------- Gaia-X Data Contract ----------
 @app.get("/gaiax/datacontract")
 def gaiax_data_contract():
     return JSONResponse(content={
@@ -416,13 +421,8 @@ def gaiax_data_contract():
         "security": "JWT authentication + mTLS (planned)"
     })
 
-# ---------- Gaia-X Self-Description ----------
 @app.get("/gaiax/descriptor")
 def gaiax_descriptor():
-    """
-    Minimal Gaia-X Service Self-Description (for hackathon prototype)
-    Format: JSON-LD (Gaia-X standard for interoperability)
-    """
     descriptor = {
         "@context": "https://www.w3.org/ns/odrl.jsonld",
         "@type": "gx:ServiceOffering",
@@ -436,26 +436,10 @@ def gaiax_descriptor():
             "gx:version": "0.1.0",
             "gx:description": "Energy forecasting and CO2 estimation service using federated building data.",
             "gx:endpoints": [
-                {
-                    "gx:entrypoint": "/ingest",
-                    "gx:method": "POST",
-                    "gx:description": "Ingest new measurement data for a building."
-                },
-                {
-                    "gx:entrypoint": "/train",
-                    "gx:method": "POST",
-                    "gx:description": "Train a forecast model for a building."
-                },
-                {
-                    "gx:entrypoint": "/forecast",
-                    "gx:method": "GET",
-                    "gx:description": "Retrieve energy forecast for a building."
-                },
-                {
-                    "gx:entrypoint": "/carbon",
-                    "gx:method": "GET",
-                    "gx:description": "Retrieve CO2 emissions forecast."
-                }
+                {"gx:entrypoint": "/ingest", "gx:method": "POST"},
+                {"gx:entrypoint": "/train", "gx:method": "POST"},
+                {"gx:entrypoint": "/forecast", "gx:method": "GET"},
+                {"gx:entrypoint": "/carbon", "gx:method": "GET"}
             ]
         },
         "gx:dataCategories": ["Energy usage", "Temperature"],
@@ -467,9 +451,6 @@ def gaiax_descriptor():
         }
     }
     return descriptor
-
-
-
 
 if __name__ == "__main__":
     import uvicorn

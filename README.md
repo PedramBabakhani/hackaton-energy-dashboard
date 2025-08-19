@@ -1,3 +1,4 @@
+
 ```markdown
 # ⚡ Energy Forecast & CO₂ PoC — Gaia-X Edition
 
@@ -23,13 +24,13 @@ Demo credentials:
 ```
 
 username = hackathon
-password = hackathon
+password = futurelab
 
 ````
 
 ---
 
-## 📦 Build & Run with Docker
+## 📦 Build & Run Locally with Docker
 
 1. **Build the image**:
 
@@ -51,6 +52,43 @@ docker run -p 8080:8080 energy-forecast-gaiax
 
 ---
 
+## ☁️ Deploy to Google Cloud Run
+
+Authenticate and set up your project:
+
+```bash
+gcloud auth login
+gcloud config set project hri-energy-forecast-469114
+gcloud services enable run.googleapis.com containerregistry.googleapis.com
+```
+
+### 1. Build and push the container image
+
+```bash
+gcloud builds submit --tag gcr.io/hri-energy-forecast-469114/energy-forecast-gaiax
+```
+
+### 2. Deploy to Cloud Run
+
+```bash
+gcloud run deploy energy-forecast-gaiax \
+  --image gcr.io/hri-energy-forecast-469114/energy-forecast-gaiax \
+  --platform managed \
+  --region europe-west1 \
+  --allow-unauthenticated \
+  --port 8080
+```
+
+After deployment, you will see a service URL like:
+
+```
+https://energy-forecast-gaiax-xxxxx-europe-west1.a.run.app
+```
+
+Use this base URL instead of `http://localhost:8080`.
+
+---
+
 ## 🛠 How to Get a Token
 
 ### Linux / macOS
@@ -58,14 +96,14 @@ docker run -p 8080:8080 energy-forecast-gaiax
 ```bash
 curl -X POST http://localhost:8080/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=hackathon&password=hackathon"
+  -d "username=hackathon&password=futurelab"
 ```
 
 ### Windows PowerShell
 
 ```powershell
 $username = "hackathon"
-$password = "hackathon"
+$password = "futurelab"
 
 $tokenResponse = Invoke-RestMethod -Uri "http://localhost:8080/token" `
   -Method Post `
@@ -75,133 +113,108 @@ $tokenResponse = Invoke-RestMethod -Uri "http://localhost:8080/token" `
 $TOKEN = $tokenResponse.access_token
 ```
 
-The API will return JSON with an `access_token`.
-Use it in every request with:
-
-```
--H "Authorization: Bearer <TOKEN>"
-```
-
----
-
-## 🌐 API Endpoints & Example Commands
-
-All requests must include the token header.
-Examples for **Linux/macOS (curl)** and **Windows PowerShell** are provided.
-
----
-
-### 🔎 Health Check
-
-**Linux/macOS:**
+When deployed on Cloud Run, replace the base URL:
 
 ```bash
-curl -X GET http://localhost:8080/health \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Windows PowerShell:**
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/health" `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
+curl -X POST https://energy-forecast-gaiax-xxxxx-europe-west1.a.run.app/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=hackathon&password=futurelab"
 ```
 
 ---
 
-### 📥 Ingest Data
+## 📊 Data Format (for `/ingest`)
 
-**Linux/macOS:**
+The API expects **JSON records** in this format:
 
-```bash
-curl -X POST http://localhost:8080/ingest \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  --data-binary @sample_data.json
+```json
+[
+  {
+    "building_id": "B-101",
+    "timestamp": "2024-01-01T00:00:00Z",
+    "energy_kwh": 120.5
+  },
+  {
+    "building_id": "B-101",
+    "timestamp": "2024-01-01T01:00:00Z",
+    "energy_kwh": 98.3
+  }
+]
 ```
 
-**Windows PowerShell:**
+* `building_id`: unique ID of the building
+* `timestamp`: ISO 8601 UTC datetime string (`YYYY-MM-DDTHH:mm:ssZ`)
+* `energy_kwh`: measured consumption in **kWh** (float)
 
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/ingest" `
-  -Method Post `
-  -Headers @{ Authorization = "Bearer $TOKEN" } `
-  -ContentType "application/json" `
-  -InFile "sample_data.json"
+Example file: **`sample_data.json`**
+
+---
+
+## 🌐 API Endpoints Explained
+
+All requests require a **Bearer token** header.
+
+### 🔎 `/health` (GET)
+
+* **Purpose:** check service status + number of rows in DB
+* **Params:** none
+* **Output:** JSON with status + row count
+
+---
+
+### 📥 `/ingest` (POST)
+
+* **Purpose:** add new building measurements to DB
+* **Input:** JSON array of records (see format above)
+* **Output:** confirmation with number of records ingested
+
+---
+
+### 🏋️ `/train` (POST)
+
+* **Purpose:** train/retrain ML model for a building
+* **Params:** `building_id` (query param)
+* **Output:** JSON status message (training complete)
+
+Example:
+
+```bash
+POST /train?building_id=B-101
 ```
 
 ---
 
-### 🏋️ Train a Model
+### 🔮 `/forecast` (GET)
 
-**Linux/macOS:**
+* **Purpose:** get future energy demand predictions
+* **Params:**
 
-```bash
-curl -X POST "http://localhost:8080/train?building_id=B-101" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Windows PowerShell:**
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/train?building_id=B-101" `
-  -Method Post `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-```
+  * `building_id` (required)
+  * `hours` (forecast horizon, e.g., 24)
+* **Output:** list of timestamps with predicted kWh
 
 ---
 
-### 🔮 Forecast Energy Demand
+### 🌍 `/carbon` (GET)
 
-**Linux/macOS:**
+* **Purpose:** estimate CO₂ emissions from forecast
+* **Params:**
 
-```bash
-curl -X GET "http://localhost:8080/forecast?building_id=B-101&hours=24" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Windows PowerShell:**
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/forecast?building_id=B-101&hours=24" `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-```
+  * `building_id` (required)
+  * `hours` (horizon)
+  * `factor_g_per_kwh` (e.g., `220` g/kWh)
+* **Output:** JSON with energy forecast + carbon emissions
 
 ---
 
-### 🌍 Estimate CO₂ Emissions
+### 📜 `/history` (GET)
 
-**Linux/macOS:**
+* **Purpose:** retrieve past ingested data
+* **Params:**
 
-```bash
-curl -X GET "http://localhost:8080/carbon?building_id=B-101&hours=24&factor_g_per_kwh=220" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Windows PowerShell:**
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/carbon?building_id=B-101&hours=24&factor_g_per_kwh=220" `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-```
-
----
-
-### 📜 Fetch History
-
-**Linux/macOS:**
-
-```bash
-curl -X GET "http://localhost:8080/history?building_id=B-101&hours=48" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Windows PowerShell:**
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/history?building_id=B-101&hours=48" `
-  -Headers @{ Authorization = "Bearer $TOKEN" }
-```
+  * `building_id` (required)
+  * `hours` (how many past hours to fetch)
+* **Output:** list of past values from DB
 
 ---
 
@@ -223,13 +236,14 @@ hackaton/
 
 ## 🚀 Quick Demo Workflow
 
-1. **Start the service** in Docker
+1. **Run locally** (Docker) **or deploy to Cloud Run**
 2. **Get a token**: POST to `/token` with username/password
 3. **Ingest data**: POST `sample_data.json` to `/ingest` with your token
 4. **Train a model**: `POST /train?building_id=B-101`
 5. **Forecast**: `GET /forecast?building_id=B-101&hours=24`
 6. **Carbon emissions**: `GET /carbon?...`
-7. **View results** in the dashboard (`/ui/`)
+7. **History**: `GET /history?...`
+8. **View results** in the dashboard (`/ui/`)
 
 ---
 

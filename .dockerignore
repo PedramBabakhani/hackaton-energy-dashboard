@@ -5,9 +5,7 @@ __pycache__/
 .Python
 .env
 .venv
-data/
 models/
-*.db
 *.sqlite
 *.sqlite3
 *.log

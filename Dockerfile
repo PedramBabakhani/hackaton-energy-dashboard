@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all project files into container
 COPY . .
 
+# Copy the SQLite database explicitly
+COPY data/energy.db /app/data/energy.db
+
 # Expose port for FastAPI
 EXPOSE 8080
 
