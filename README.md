@@ -2,22 +2,24 @@
 ```markdown
 # ⚡ Energy Forecast & CO₂ PoC — Gaia-X Edition
 
-This microservice demonstrates **secure, Gaia-X compliant energy data sharing**:
+This project is a **hackathon-ready microservice** for the Future Energy Lab / Gaia-X data space.  
+It demonstrates **secure, federated energy data sharing**:
 
-- **Ingests** hourly building energy measurements  
-- **Trains** lightweight ML models for short-term forecasting  
-- **Forecasts** energy demand and **estimates CO₂ emissions**  
-- **Protects access** via **JWT-based authentication** following Gaia-X trust principles  
-- Comes with a minimal **HTML/JS dashboard**
+- **Ingest** building energy & environment data (SMGW, tariffs, PV/wind forecasts, etc.)
+- **Train** a lightweight ML model for short-term demand forecasting
+- **Forecast** building load with confidence intervals
+- **Estimate CO₂ emissions** using emission factors
+- **Publish Gaia-X compliant service metadata** (discoverable in a federated data space)
+- **Secure access** via JWT login
+- Comes with a **dashboard (HTML/JS + Chart.js)**
 
 ---
 
-## 🔐 Gaia-X Authentication
+## 🔐 Authentication (Gaia-X)
 
-- All API calls require a **JWT access token**  
-- The token encodes the `sub` (subject = username) and expiry  
-- Only authenticated requests are accepted  
-- The dashboard includes a login form for username & password to request a token  
+- Every API call requires a **JWT bearer token**
+- Token is obtained from `/token` endpoint using username + password
+- The dashboard already implements this login flow
 
 Demo credentials:
 
@@ -30,230 +32,204 @@ password = futurelab
 
 ---
 
-## 📦 Build & Run Locally with Docker
-
-1. **Build the image**:
+## 📦 Build & Run Locally
 
 ```bash
+# Build container
 docker build -t energy-forecast-gaiax .
+
+# Run container
+docker run -p 8080:8080 energy-forecast-gaiax
 ````
 
-2. **Run the container**:
-
-```bash
-docker run -p 8080:8080 energy-forecast-gaiax
-```
-
-3. Open the API docs:
-   👉 [http://localhost:8080/docs](http://localhost:8080/docs)
-
-4. Open the dashboard:
-   👉 [http://localhost:8080/ui/](http://localhost:8080/ui/)
+* API docs: [http://localhost:8080/docs](http://localhost:8080/docs)
+* Dashboard: [http://localhost:8080/ui/](http://localhost:8080/ui/)
 
 ---
 
-## ☁️ Deploy to Google Cloud Run
-
-Authenticate and set up your project:
+## ☁️ Deploy on Google Cloud Run
 
 ```bash
 gcloud auth login
-gcloud config set project hri-energy-forecast-469114
+gcloud config set project <your-project-id>
 gcloud services enable run.googleapis.com containerregistry.googleapis.com
-```
 
-### 1. Build and push the container image
+# Build & push
+gcloud builds submit --tag gcr.io/<your-project-id>/energy-forecast-gaiax
 
-```bash
-gcloud builds submit --tag gcr.io/hri-energy-forecast-469114/energy-forecast-gaiax
-```
-
-### 2. Deploy to Cloud Run
-
-```bash
+# Deploy
 gcloud run deploy energy-forecast-gaiax \
-  --image gcr.io/hri-energy-forecast-469114/energy-forecast-gaiax \
+  --image gcr.io/<your-project-id>/energy-forecast-gaiax \
   --platform managed \
   --region europe-west1 \
   --allow-unauthenticated \
   --port 8080
 ```
 
-After deployment, you will see a service URL like:
+After deployment, replace `http://localhost:8080` with the Cloud Run URL, e.g.:
 
 ```
 https://energy-forecast-gaiax-xxxxx-europe-west1.a.run.app
 ```
 
-Use this base URL instead of `http://localhost:8080`.
-
 ---
 
-## 🛠 How to Get a Token
+## 📊 Data Format for `/ingest`
 
-### Linux / macOS
-
-```bash
-curl -X POST http://localhost:8080/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=hackathon&password=futurelab"
-```
-
-### Windows PowerShell
-
-```powershell
-$username = "hackathon"
-$password = "futurelab"
-
-$tokenResponse = Invoke-RestMethod -Uri "http://localhost:8080/token" `
-  -Method Post `
-  -ContentType "application/x-www-form-urlencoded" `
-  -Body "username=$username&password=$password"
-
-$TOKEN = $tokenResponse.access_token
-```
-
-When deployed on Cloud Run, replace the base URL:
-
-```bash
-curl -X POST https://energy-forecast-gaiax-xxxxx-europe-west1.a.run.app/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=hackathon&password=futurelab"
-```
-
----
-
-## 📊 Data Format (for `/ingest`)
-
-The API expects **JSON records** in this format:
+Expected JSON payload:
 
 ```json
-[
-  {
-    "building_id": "B-101",
-    "timestamp": "2024-01-01T00:00:00Z",
-    "energy_kwh": 120.5
-  },
-  {
-    "building_id": "B-101",
-    "timestamp": "2024-01-01T01:00:00Z",
-    "energy_kwh": 98.3
-  }
-]
+{
+  "building_id": "B-101",
+  "records": [
+    {
+      "ts": "2025-08-18T00:00:00Z",
+      "q_flow_heat": 120,
+      "temperature": 22.5,
+      "wind_speed": 4.2,
+      "price": 0.31
+    },
+    {
+      "ts": "2025-08-18T01:00:00Z",
+      "q_flow_heat": 118,
+      "temperature": 22.0,
+      "wind_speed": 4.0,
+      "price": 0.29
+    }
+  ]
+}
 ```
 
-* `building_id`: unique ID of the building
-* `timestamp`: ISO 8601 UTC datetime string (`YYYY-MM-DDTHH:mm:ssZ`)
-* `energy_kwh`: measured consumption in **kWh** (float)
+* `building_id`: string ID of the building
+* `ts`: ISO 8601 timestamp in UTC
+* `q_flow_heat`: energy load (float)
+* `temperature`, `wind_speed`, `price`: optional context variables
 
-Example file: **`sample_data.json`**
-
----
-
-## 🌐 API Endpoints Explained
-
-All requests require a **Bearer token** header.
-
-### 🔎 `/health` (GET)
-
-* **Purpose:** check service status + number of rows in DB
-* **Params:** none
-* **Output:** JSON with status + row count
+Sample file: `sample_data.json`
 
 ---
 
-### 📥 `/ingest` (POST)
+## 🌐 API Endpoints
 
-* **Purpose:** add new building measurements to DB
-* **Input:** JSON array of records (see format above)
-* **Output:** confirmation with number of records ingested
+All require `Authorization: Bearer <TOKEN>` unless stated.
+
+| Endpoint    | Method | Purpose                               |
+| ----------- | ------ | ------------------------------------- |
+| `/health`   | GET    | Service health + DB row count         |
+| `/token`    | POST   | Get JWT token                         |
+| `/ingest`   | POST   | Insert building data                  |
+| `/train`    | POST   | Train model for `building_id`         |
+| `/forecast` | GET    | Load forecast with PI bands           |
+| `/carbon`   | GET    | CO₂ estimate based on forecast        |
+| `/history`  | GET    | Get past ingested records             |
+| `/gaiax/*`  | GET    | Gaia-X metadata, contract, descriptor |
 
 ---
 
-### 🏋️ `/train` (POST)
-
-* **Purpose:** train/retrain ML model for a building
-* **Params:** `building_id` (query param)
-* **Output:** JSON status message (training complete)
-
-Example:
+## 🛠 Cheatsheet — Linux/macOS
 
 ```bash
-POST /train?building_id=B-101
+# 1. Get token
+TOKEN=$(curl -s -X POST $BASE/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=hackathon&password=futurelab" | jq -r .access_token)
+
+# 2. Ingest data
+curl -X POST $BASE/ingest \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @sample_data.json
+
+# 3. Train model
+curl -X POST "$BASE/train?building_id=B-101" -H "Authorization: Bearer $TOKEN"
+
+# 4. Forecast (24h)
+curl "$BASE/forecast?building_id=B-101&hist=48&hours=24" -H "Authorization: Bearer $TOKEN"
+
+# 5. CO₂ forecast
+curl "$BASE/carbon?building_id=B-101&hours=24&factor_g_per_kwh=220" -H "Authorization: Bearer $TOKEN"
+
+# 6. History
+curl "$BASE/history?building_id=B-101&limit=50" -H "Authorization: Bearer $TOKEN"
+
+# 7. Health check
+curl $BASE/health
 ```
 
 ---
 
-### 🔮 `/forecast` (GET)
+## 🛠 Cheatsheet — Windows (PowerShell)
 
-* **Purpose:** get future energy demand predictions
-* **Params:**
+```powershell
+$BASE = "https://energy-forecast-gaiax-xxxxx-europe-west1.a.run.app"
+$BID  = "B-101"
 
-  * `building_id` (required)
-  * `hours` (forecast horizon, e.g., 24)
-* **Output:** list of timestamps with predicted kWh
+# 1. Get token
+$resp  = curl -Method POST -Uri "$BASE/token" `
+  -Headers @{ "Content-Type" = "application/x-www-form-urlencoded" } `
+  -Body "username=hackathon&password=futurelab"
+$TOKEN = ($resp.Content | ConvertFrom-Json).access_token
 
----
+# 2. Ingest JSON file
+curl -Method POST -Uri "$BASE/ingest" `
+  -Headers @{ "Authorization"="Bearer $TOKEN"; "Content-Type"="application/json" } `
+  -InFile ".\sample_data.json"
 
-### 🌍 `/carbon` (GET)
+# 3. Train
+curl -Method POST -Uri "$BASE/train?building_id=$BID" -Headers @{ "Authorization"="Bearer $TOKEN" }
 
-* **Purpose:** estimate CO₂ emissions from forecast
-* **Params:**
+# 4. Forecast (24h)
+curl -Method GET -Uri "$BASE/forecast?building_id=$BID&hist=48&hours=24" -Headers @{ "Authorization"="Bearer $TOKEN" }
 
-  * `building_id` (required)
-  * `hours` (horizon)
-  * `factor_g_per_kwh` (e.g., `220` g/kWh)
-* **Output:** JSON with energy forecast + carbon emissions
+# 5. CO₂ forecast
+curl -Method GET -Uri "$BASE/carbon?building_id=$BID&hours=24&factor_g_per_kwh=220" -Headers @{ "Authorization"="Bearer $TOKEN" }
 
----
+# 6. History
+curl -Method GET -Uri "$BASE/history?building_id=$BID&limit=50" -Headers @{ "Authorization"="Bearer $TOKEN" }
 
-### 📜 `/history` (GET)
-
-* **Purpose:** retrieve past ingested data
-* **Params:**
-
-  * `building_id` (required)
-  * `hours` (how many past hours to fetch)
-* **Output:** list of past values from DB
-
----
-
-## 📂 Repository Layout
-
-```
-hackaton/
-├─ data/                  # SQLite DB
-├─ models/                # Trained models
-├─ dashboard/             # HTML/JS/CSS dashboard (token login included)
-├─ sample_data.json       # Example dataset for ingestion
-├─ main.py                # FastAPI service
-├─ requirements.txt       # Python deps
-├─ Dockerfile             # Container build
-└─ README.md              # ← You are here
+# 7. Health check
+curl "$BASE/health"
 ```
 
 ---
 
-## 🚀 Quick Demo Workflow
+## 📂 Repo Layout
 
-1. **Run locally** (Docker) **or deploy to Cloud Run**
-2. **Get a token**: POST to `/token` with username/password
-3. **Ingest data**: POST `sample_data.json` to `/ingest` with your token
-4. **Train a model**: `POST /train?building_id=B-101`
-5. **Forecast**: `GET /forecast?building_id=B-101&hours=24`
-6. **Carbon emissions**: `GET /carbon?...`
-7. **History**: `GET /history?...`
-8. **View results** in the dashboard (`/ui/`)
-
----
-
-## 🛡 Notes
-
-* **Gaia-X principle**: sovereign, trusted data exchange. Tokens simulate identity verification
-* Default credentials are for demo only — replace with a real IAM service in production
-* SQLite and local models are mounted inside the container; use PostgreSQL or cloud storage for production
-* CORS is open (`*`) for hackathon speed — tighten for real deployments
-
+```
+.
+├─ data/                # SQLite DB
+├─ models/              # Trained models
+├─ dashboard/           # Frontend: HTML/JS/CSS
+├─ sample_data.json     # Example input
+├─ main.py              # FastAPI backend
+├─ requirements.txt     # Python deps
+├─ Dockerfile           # Container build
+└─ README.md            # ← this file
 ```
 
 ---
+
+## 🚀 Demo Workflow (Step-by-step)
+
+1. **Login** → `/token` → get JWT
+2. **Ingest** → `/ingest` → send sample\_data.json
+3. **Train** → `/train?building_id=B-101`
+4. **Forecast** → `/forecast` → returns load curve + PI bands
+5. **CO₂ forecast** → `/carbon` → gCO₂/kWh
+6. **History** → `/history` → past data
+7. **Gaia-X descriptors** → `/gaiax/*` → service discoverability
+8. **Dashboard** → `/ui/` → interactive charts
+
+---
+
+## 🛡 Hackathon Notes
+
+* **Gaia-X compliance**: Metadata + contracts published via `/gaiax/*`
+* **Authentication**: JWT; can be extended with mTLS
+* **Provided datasets**: SMGW, tariffs, PV/wind forecasts → ingest via `/ingest`
+* **UI**: dashboard helps non-technical jury see results
+* **Pitch tip**: highlight how your service can combine tariffs + forecasts + carbon impact
+
+---
+
+```
